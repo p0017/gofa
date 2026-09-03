@@ -129,7 +129,7 @@ class GOFAMistral(torch.nn.Module):
         """
         Load the GNN and lora weight (if available).
         """
-        state_dict = torch.load(load_dir, map_location="cpu")
+        state_dict = torch.load(load_dir, map_location="cpu", weights_only=False)
         missing_keys, _ = self.model.icae.get_base_model().model.g_layers.load_state_dict(state_dict, strict=False)
         print("GNN module is missing the following keys:", missing_keys)
         missing_keys, _ = self.load_state_dict(state_dict, strict=False)
