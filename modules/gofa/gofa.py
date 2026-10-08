@@ -1,5 +1,6 @@
 # example code for running inference with fine-tuned checkpoint
 from typing import Optional
+import os
 
 import numpy as np
 import torch
@@ -17,8 +18,27 @@ from modules.utils import safe_download_hf_file
 
 
 class GOFAMistralConfig(MistralConfig):
-    def __init__(self, dim=4096, num_layers=6, mem_token=128, head=32, add_self_loops=True, dropout=0.0,
-                 llama_dtype=torch.float16, gnn_hidden_act="relu", gnn_mlp_type="gp", gnn_type="index", position_encoding="none", pretraining_tp=0, gating=True, interleave=True, mp_att="concat", trainable_layer=5, fuse_type="interleave", **kwargs):
+    def __init__(
+        self,
+        dim=4096,
+        num_layers=6,
+        mem_token=128,
+        head=32,
+        add_self_loops=True,
+        dropout=0.0,
+        llama_dtype=torch.float16,
+        gnn_hidden_act="relu",
+        gnn_mlp_type="gp",
+        gnn_type="index",
+        position_encoding="none",
+        pretraining_tp=0,
+        gating=True,
+        interleave=True,
+        mp_att="concat",
+        trainable_layer=5,
+        fuse_type="interleave",
+        **kwargs
+    ):
         super().__init__(**kwargs)
         self.dim = dim
         self.mem_token = mem_token
@@ -44,9 +64,14 @@ class ModelArguments:
     model_name_or_path: str = field(default="mistralai/Mistral-7B-Instruct-v0.2")
     lora_r: int = field(default=512, metadata={"help": "lora rank"})
     lora_dropout: float = field(default=0.05, metadata={"help": "lora dropout"})
-    mem_size: int = field(default=128, metadata={"help": "Memory size"}, )
-    dec_lora: bool = field(default=False, metadata={"help": "Whether using lora in the decoder LLM"})
-    checkpoint_dir: str = field(default="./cache_data/model/")
+    mem_size: int = field(
+        default=128,
+        metadata={"help": "Memory size"},
+    )
+    dec_lora: bool = field(
+        default=False, metadata={"help": "Whether using lora in the decoder LLM"}
+    )
+    checkpoint_dir: str = field(default=os.path.expanduser("~/models/weights/gofa/"))
 
 
 @dataclass
@@ -54,17 +79,44 @@ class TrainingArguments:
     cache_dir: Optional[str] = field(default=None)
     optim: str = field(default="adamw_torch")
     bf16: bool = field(default=False)
-    model_max_length: int = field(default=512,
-        metadata={"help": "Maximum sequence length per node. Sequences will be right padded (and possibly truncated)."}, )
-    fixed_mem_size: int = field(default=128, metadata={"help": "Enalbing the fixed mem size."}, )
-    mean_compression_rate: int = field(default=4, metadata={"help": "Mean compression rate; default=4"}, )
-    min_tokens_for_lm: int = field(default=64, metadata={"help": "Minimum tokens for lm objective learning"}, )
-    leave_tokens_for_lm: int = field(default=8, metadata={"help": "Leave some tokens without loss for lm objective"}, )
-    lm_ratio: float = field(default=0.0, metadata={"help": "Ratio for LM training."}, )
-    add_special_token_for_lm: bool = field(default=False,
-        metadata={"help": "Add a special token for the prompt of language modeling; default: False"}, )
-    restore_from: str = field(default="",
-        metadata={"help": "The checkpoint that should be restored from for fine-tuning"})
+    model_max_length: int = field(
+        default=512,
+        metadata={
+            "help": "Maximum sequence length per node. Sequences will be right padded (and possibly truncated)."
+        },
+    )
+    fixed_mem_size: int = field(
+        default=128,
+        metadata={"help": "Enalbing the fixed mem size."},
+    )
+    mean_compression_rate: int = field(
+        default=4,
+        metadata={"help": "Mean compression rate; default=4"},
+    )
+    min_tokens_for_lm: int = field(
+        default=64,
+        metadata={"help": "Minimum tokens for lm objective learning"},
+    )
+    leave_tokens_for_lm: int = field(
+        default=8,
+        metadata={"help": "Leave some tokens without loss for lm objective"},
+    )
+    lm_ratio: float = field(
+        default=0.0,
+        metadata={"help": "Ratio for LM training."},
+    )
+    add_special_token_for_lm: bool = field(
+        default=False,
+        metadata={
+            "help": "Add a special token for the prompt of language modeling; default: False"
+        },
+    )
+    restore_from: str = field(
+        default="",
+        metadata={
+            "help": "The checkpoint that should be restored from for fine-tuning"
+        },
+    )
 
 
 ###################################################################
@@ -76,8 +128,15 @@ class GOFAMistral(torch.nn.Module):
     def __init__(self, transformer_args):
         super().__init__()
         model_args, training_args, gofa_args = transformer_args
-        model = MistralICAE(model_args, training_args, gofa_args)  # restored llama2-7b-chat model
-        dir = safe_download_hf_file("sggetao/icae", "mistral_7b_ft_icae.safetensors", model_args.checkpoint_dir, repo_type=None)
+        model = MistralICAE(
+            model_args, training_args, gofa_args
+        )  # restored llama2-7b-chat model
+        dir = safe_download_hf_file(
+            "sggetao/icae",
+            "mistral_7b_ft_icae.safetensors",
+            model_args.checkpoint_dir,
+            repo_type=None,
+        )
         state_dict = load_file(dir)  # change the path for your model
         new_state_dict = OrderedDict()
         for layer_name, weight in state_dict.items():
@@ -86,7 +145,9 @@ class GOFAMistral(torch.nn.Module):
         # model.merge_lora()
         self.model_args = model_args
         self.dec_lora = model_args.dec_lora
-        self.mem_tokens = list(range(model.vocab_size, model.vocab_size + model_args.mem_size))
+        self.mem_tokens = list(
+            range(model.vocab_size, model.vocab_size + model_args.mem_size)
+        )
         self.mem_size = model_args.mem_size
         self.model = model
         self.model.tokenizer.pad_token = self.model.tokenizer.eos_token
@@ -110,8 +171,12 @@ class GOFAMistral(torch.nn.Module):
 
     def load_pretrained(self, pretrained_path=None):
         if pretrained_path is None:
-            pretrained_path = safe_download_hf_file("WFRaain/GOFA", "mistral_qamag03_best_ckpt.pth", self.model_args.checkpoint_dir,
-                                        repo_type=None)
+            pretrained_path = safe_download_hf_file(
+                "WFRaain/GOFA",
+                "mistral_qamag03_best_ckpt.pth",
+                self.model_args.checkpoint_dir,
+                repo_type=None,
+            )
         self.load_partial(pretrained_path)
 
     def save_partial(self, save_dir):
@@ -130,7 +195,12 @@ class GOFAMistral(torch.nn.Module):
         Load the GNN and lora weight (if available).
         """
         state_dict = torch.load(load_dir, map_location="cpu", weights_only=False)
-        missing_keys, _ = self.model.icae.get_base_model().model.g_layers.load_state_dict(state_dict, strict=False)
+        (
+            missing_keys,
+            _,
+        ) = self.model.icae.get_base_model().model.g_layers.load_state_dict(
+            state_dict, strict=False
+        )
         print("GNN module is missing the following keys:", missing_keys)
         missing_keys, _ = self.load_state_dict(state_dict, strict=False)
 
@@ -145,16 +215,24 @@ class GOFAMistral(torch.nn.Module):
             text_inputs = g.x
         text_inputs = text_inputs.tolist()
         llm_output = self.encode(text_inputs, graph=g, partial_grad=True)
-        emb = llm_output[:g.node_map.size(-1)]
+        emb = llm_output[: g.node_map.size(-1)]
         if not hasattr(g, "answer"):
             raise ValueError("Forward stage graph should contain answer.")
         answer_texts = g.answer[g.answer_map.cpu().numpy()].tolist()
         prompt_texts = g.question[g.question_map.cpu().numpy()].tolist()
         # Legacy hard coding TODO: remove when TAGLAS is fixed.
-        prompt_input_texts = ["" if (p.startswith("Please complete the sentence of the node") or p == "") else p for p
-                              in prompt_texts]
+        prompt_input_texts = [
+            (
+                ""
+                if (p.startswith("Please complete the sentence of the node") or p == "")
+                else p
+            )
+            for p in prompt_texts
+        ]
         emb = emb[g.question_index]
-        answer_logits, answer_id, masks = self.decode(answer_texts, emb, prompt=prompt_input_texts)
+        answer_logits, answer_id, masks = self.decode(
+            answer_texts, emb, prompt=prompt_input_texts
+        )
         return answer_logits, answer_id, masks, answer_texts
 
     def generate(self, g, max_length=128):
@@ -168,25 +246,38 @@ class GOFAMistral(torch.nn.Module):
             text_inputs = g.x
         text_inputs = text_inputs.tolist()
         llm_output = self.encode(text_inputs, graph=g, partial_grad=True)
-        emb = llm_output[:g.node_map.size(-1)]
+        emb = llm_output[: g.node_map.size(-1)]
         prompt_texts = g.question[g.question_map.cpu().numpy()].tolist()
-        prompt_input_texts = ["" if (p.startswith("Please complete the sentence of the node") or p == "") else p for p
-                              in prompt_texts]
+        prompt_input_texts = [
+            (
+                ""
+                if (p.startswith("Please complete the sentence of the node") or p == "")
+                else p
+            )
+            for p in prompt_texts
+        ]
         emb = emb[g.question_index]
-        generated_text = self.infer(emb, prompt=prompt_input_texts, max_length=max_length)
+        generated_text = self.infer(
+            emb, prompt=prompt_input_texts, max_length=max_length
+        )
         return generated_text
 
     def encode(self, data, graph=None, partial_grad=None):
         cur_device = self.model.memory_token_embed.weight.device
         batch_size = len(data)
-        text_output = \
-        self.model.tokenizer(data, truncation=True, max_length=self.model.training_args.model_max_length, padding=False,
-                             return_attention_mask=False)["input_ids"]
+        text_output = self.model.tokenizer(
+            data,
+            truncation=True,
+            max_length=self.model.training_args.model_max_length,
+            padding=False,
+            return_attention_mask=False,
+        )["input_ids"]
 
         text_output = [t + self.mem_tokens for t in text_output]
         text_output = {"input_ids": text_output}
-        text_output = self.model.tokenizer.pad(text_output, padding=True, return_tensors="pt")["input_ids"].to(
-            cur_device)
+        text_output = self.model.tokenizer.pad(
+            text_output, padding=True, return_tensors="pt"
+        )["input_ids"].to(cur_device)
         mem_mask = text_output >= self.model.vocab_size
 
         mem_mask = mem_mask.to(cur_device)
@@ -198,58 +289,115 @@ class GOFAMistral(torch.nn.Module):
         for name, param in self.model.icae.named_parameters():
             if "encadapt" in name:
                 param.requires_grad = False
-        compress_outputs = self.model.icae(inputs_embeds=autoencoder_input_embedding, output_hidden_states=True,
-                                           graph=graph, mem_mask=mem_mask, partial_grad=partial_grad, map_node=True)
+        compress_outputs = self.model.icae(
+            inputs_embeds=autoencoder_input_embedding,
+            output_hidden_states=True,
+            graph=graph,
+            mem_mask=mem_mask,
+            partial_grad=partial_grad,
+            map_node=True,
+        )
         self.model.icae.disable_adapter_layers()
         compress_outputs = compress_outputs.hidden_states[-1]
 
         if graph is not None:
-            node_emb = compress_outputs[:len(graph.node_map)]
-            map_mem_mask = mem_mask[:graph.num_node_feat][graph.node_map]
-            memory_embedding = node_emb[map_mem_mask].view(len(node_emb), self.mem_size, -1)
+            node_emb = compress_outputs[: len(graph.node_map)]
+            map_mem_mask = mem_mask[: graph.num_node_feat][graph.node_map]
+            memory_embedding = node_emb[map_mem_mask].view(
+                len(node_emb), self.mem_size, -1
+            )
         else:
-            memory_embedding = compress_outputs[mem_mask].view(batch_size, self.mem_size, -1)
+            memory_embedding = compress_outputs[mem_mask].view(
+                batch_size, self.mem_size, -1
+            )
         return memory_embedding
 
     def decode(self, data, mem_embs, graph=None, prompt=None):
-        prompt_output = self.model.tokenizer(data, add_special_tokens=False, padding=False, truncation=False)["input_ids"]
-        prompt_output = [p + [self.model.tokenizer.eos_token_id] if len(p) < self.model.training_args.model_max_length else p[:self.model.training_args.model_max_length] for p in prompt_output]
+        prompt_output = self.model.tokenizer(
+            data, add_special_tokens=False, padding=False, truncation=False
+        )["input_ids"]
+        prompt_output = [
+            (
+                p + [self.model.tokenizer.eos_token_id]
+                if len(p) < self.model.training_args.model_max_length
+                else p[: self.model.training_args.model_max_length]
+            )
+            for p in prompt_output
+        ]
         original_prompt_output = prompt_output
 
         if prompt is None:
             prompt = [""] * len(data)
-        prompt_input = self.model.left_tokenizer(prompt, add_special_tokens=False, padding=False, truncation=True, max_length=512)["input_ids"]
+        prompt_input = self.model.left_tokenizer(
+            prompt,
+            add_special_tokens=False,
+            padding=False,
+            truncation=True,
+            max_length=512,
+        )["input_ids"]
         batch_size = len(prompt_input)
 
         # For Mistral, decode contains: prefix, memory slots and suffix
-        prompt_left_ids = [[1, 733, 16289, 28793] if len(a) > 0 else [] for a in prompt_input]
-        prompt_right_ids = [[self.model.ft_token_id] + a + [733, 28748, 16289, 28793] if len(a) > 0 else a for a in
-                            prompt_input]
-        prompt_ids = [a + [self.model.tokenizer.pad_token_id] * self.mem_size + b + c for a, b, c in
-                      zip(prompt_left_ids, prompt_right_ids, prompt_output)]
+        prompt_left_ids = [
+            [1, 733, 16289, 28793] if len(a) > 0 else [] for a in prompt_input
+        ]
+        prompt_right_ids = [
+            (
+                [self.model.ft_token_id] + a + [733, 28748, 16289, 28793]
+                if len(a) > 0
+                else a
+            )
+            for a in prompt_input
+        ]
+        prompt_ids = [
+            a + [self.model.tokenizer.pad_token_id] * self.mem_size + b + c
+            for a, b, c in zip(prompt_left_ids, prompt_right_ids, prompt_output)
+        ]
         prompt_mask = [
-            [False] * (len(prompt_left_ids[i]) + self.mem_size - 1 + len(prompt_right_ids[i])) + [True] * len(
-                prompt_output[i]) + [False] for i in range(batch_size)]
+            [False]
+            * (len(prompt_left_ids[i]) + self.mem_size - 1 + len(prompt_right_ids[i]))
+            + [True] * len(prompt_output[i])
+            + [False]
+            for i in range(batch_size)
+        ]
 
-        answer_prompt = torch.cat([torch.tensor(p, dtype=torch.long) for p in prompt_output], dim=-1).to(
-            mem_embs.device)
+        answer_prompt = torch.cat(
+            [torch.tensor(p, dtype=torch.long) for p in prompt_output], dim=-1
+        ).to(mem_embs.device)
 
         prompt_output = {"input_ids": prompt_ids, "attention_mask": prompt_mask}
-        prompt_output = self.model.tokenizer.pad(prompt_output, padding=True, return_tensors="pt")
+        prompt_output = self.model.tokenizer.pad(
+            prompt_output, padding=True, return_tensors="pt"
+        )
         prompt_answer_ids = prompt_output["input_ids"].to(mem_embs.device)
         prompt_answer_embs = self.model.tokens_to_embeddings(prompt_answer_ids)
 
-        mem_mask = [[False] * len(prompt_left_ids[i]) + [True] * self.mem_size + [False] * (
-                len(prompt_output["input_ids"][i]) - len(prompt_left_ids[i]) - self.mem_size) for i in
-                    range(batch_size)]
+        mem_mask = [
+            [False] * len(prompt_left_ids[i])
+            + [True] * self.mem_size
+            + [False]
+            * (
+                len(prompt_output["input_ids"][i])
+                - len(prompt_left_ids[i])
+                - self.mem_size
+            )
+            for i in range(batch_size)
+        ]
         prompt_mask = [
-            [False] * (len(prompt_left_ids[i]) + self.mem_size - 1 + len(prompt_right_ids[i])) + [True] * len(
-                original_prompt_output[i]) + [False] * (1 + len(prompt_output["input_ids"][i]) - len(prompt_ids[i])) for
-            i in range(batch_size)]
+            [False]
+            * (len(prompt_left_ids[i]) + self.mem_size - 1 + len(prompt_right_ids[i]))
+            + [True] * len(original_prompt_output[i])
+            + [False] * (1 + len(prompt_output["input_ids"][i]) - len(prompt_ids[i]))
+            for i in range(batch_size)
+        ]
 
-        prompt_answer_embs[torch.tensor(mem_mask)] = mem_embs.view(-1, mem_embs.size()[-1])
+        prompt_answer_embs[torch.tensor(mem_mask)] = mem_embs.view(
+            -1, mem_embs.size()[-1]
+        )
 
-        target_mask = torch.tensor(prompt_mask, dtype=torch.long, device=mem_embs.device).to(torch.bool)
+        target_mask = torch.tensor(
+            prompt_mask, dtype=torch.long, device=mem_embs.device
+        ).to(torch.bool)
 
         if self.dec_lora:
             self.model.icae.set_adapter("default")
@@ -265,27 +413,56 @@ class GOFAMistral(torch.nn.Module):
 
         if prompt is None:
             prompt = [""] * len(mem_embs)
-        prompt_input = self.model.tokenizer(prompt, add_special_tokens=False, padding=False)["input_ids"]
+        prompt_input = self.model.tokenizer(
+            prompt, add_special_tokens=False, padding=False
+        )["input_ids"]
         batch_size = len(prompt_input)
 
-        prompt_left_ids = [[1, 733, 16289, 28793] if len(a) > 0 else [] for a in prompt_input]
+        prompt_left_ids = [
+            [1, 733, 16289, 28793] if len(a) > 0 else [] for a in prompt_input
+        ]
 
-        prompt_right_ids = [[self.model.ft_token_id] + a + [733, 28748, 16289, 28793] if len(a) > 0 else a for a in
-                            prompt_input]
+        prompt_right_ids = [
+            (
+                [self.model.ft_token_id] + a + [733, 28748, 16289, 28793]
+                if len(a) > 0
+                else a
+            )
+            for a in prompt_input
+        ]
 
-        mem_mask = [[False] * len(prompt_left_ids[i]) + [True] * self.mem_size + [False] * len(prompt_right_ids[i]) for
-                    i in range(batch_size)]
-        att_mask = [[True] * (len(prompt_left_ids[i]) + self.mem_size + len(prompt_right_ids[i])) for i in
-                    range(batch_size)]
-        prompt_ids = [prompt_left_ids[i] + [self.model.tokenizer.pad_token_id] * self.mem_size + prompt_right_ids[i] for
-                      i in range(batch_size)]
+        mem_mask = [
+            [False] * len(prompt_left_ids[i])
+            + [True] * self.mem_size
+            + [False] * len(prompt_right_ids[i])
+            for i in range(batch_size)
+        ]
+        att_mask = [
+            [True]
+            * (len(prompt_left_ids[i]) + self.mem_size + len(prompt_right_ids[i]))
+            for i in range(batch_size)
+        ]
+        prompt_ids = [
+            prompt_left_ids[i]
+            + [self.model.tokenizer.pad_token_id] * self.mem_size
+            + prompt_right_ids[i]
+            for i in range(batch_size)
+        ]
 
-        input_prompt_ids = self.model.left_tokenizer.pad({"input_ids": prompt_ids, "attention_mask": mem_mask},
-                                                         padding=True, return_tensors="pt")
-        mem_mask = input_prompt_ids["attention_mask"].to(device=mem_embs.device, dtype=torch.bool)
+        input_prompt_ids = self.model.left_tokenizer.pad(
+            {"input_ids": prompt_ids, "attention_mask": mem_mask},
+            padding=True,
+            return_tensors="pt",
+        )
+        mem_mask = input_prompt_ids["attention_mask"].to(
+            device=mem_embs.device, dtype=torch.bool
+        )
 
-        input_prompt_ids = self.model.left_tokenizer.pad({"input_ids": prompt_ids, "attention_mask": att_mask},
-                                                         padding=True, return_tensors="pt")
+        input_prompt_ids = self.model.left_tokenizer.pad(
+            {"input_ids": prompt_ids, "attention_mask": att_mask},
+            padding=True,
+            return_tensors="pt",
+        )
         prompt_ids = input_prompt_ids["input_ids"]
         att_mask = input_prompt_ids["attention_mask"].to(device=mem_embs.device)
 
@@ -306,26 +483,44 @@ class GOFAMistral(torch.nn.Module):
         else:
             self.model.icae.disable_adapter_layers()
         for i in range(max_length):
-            out = self.model.icae(inputs_embeds=output, attention_mask=att_mask, past_key_values=past_key_values,
-                                 use_cache=True)
+            out = self.model.icae(
+                inputs_embeds=output,
+                attention_mask=att_mask,
+                past_key_values=past_key_values,
+                use_cache=True,
+            )
 
-            logits = out.logits[:, -1, :self.model.vocab_size - 1]
+            logits = out.logits[:, -1, : self.model.vocab_size - 1]
 
             past_key_values = out.past_key_values
 
             next_token_id = torch.argmax(logits, dim=-1, keepdim=True)
 
-            eos_reached = torch.logical_or(eos_reached, (next_token_id == self.model.tokenizer.eos_token_id).view(-1))
+            eos_reached = torch.logical_or(
+                eos_reached,
+                (next_token_id == self.model.tokenizer.eos_token_id).view(-1),
+            )
 
             # eos_reached = torch.logical_or(eos_reached, (next_token_id==self.model.tokenizer.bos_token_id).view(-1))
 
             # eos_reached = torch.logical_or(eos_reached, (next_token_id>=32000).view(-1))
 
-            output = self.model.icae.get_base_model().model.embed_tokens(next_token_id).to(mem_embs.device)
+            output = (
+                self.model.icae.get_base_model()
+                .model.embed_tokens(next_token_id)
+                .to(mem_embs.device)
+            )
 
             generate_text.append(next_token_id.view(-1, 1))
             att_mask = torch.cat(
-                [att_mask, torch.ones((len(att_mask), 1), dtype=att_mask.dtype, device=att_mask.device)], dim=-1)
+                [
+                    att_mask,
+                    torch.ones(
+                        (len(att_mask), 1), dtype=att_mask.dtype, device=att_mask.device
+                    ),
+                ],
+                dim=-1,
+            )
 
             if torch.all(eos_reached):
                 break
@@ -336,5 +531,3 @@ class GOFAMistral(torch.nn.Module):
         generated_text = self.model.tokenizer.batch_decode(generate_text)
 
         return generated_text
-
-
